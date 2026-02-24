@@ -352,18 +352,22 @@ def extensive_search_and_crawl(
             pass
     
     # Crawl all unique URLs
+    # Calculate average results for formatting
+    query_count = min(num_queries, len(query_templates))
+    avg_results = len(all_urls) / query_count if query_count > 0 else 0
+    
     crawl_summary = f"""# 扩展搜索与爬取报告
 
 **主题**: {topic}
-**搜索查询数**: {min(num_queries, len(query_templates))}
+**搜索查询数**: {query_count}
 **收集到URL数**: {len(all_urls)}
 **目标**: 至少 50 个页面
 
 ## 搜索统计
 
-- 总查询次数: {min(num_queries, len(query_templates))}
+- 总查询次数: {query_count}
 - 发现唯一URL: {len(all_urls)}
-- 每个查询平均结果: {len(all_urls) / min(num_queries, len(query_templates)):.1f if min(num_queries, len(query_templates)) > 0 else 0}
+- 每个查询平均结果: {avg_results:.1f}
 
 ## 正在爬取网页...
 
