@@ -12,6 +12,12 @@ from langchain.tools import tool
 from langchain.tools import ToolRuntime
 from coze_coding_utils.runtime_ctx.context import new_context
 
+try:
+    from coze_coding_dev_sdk.s3 import S3SyncStorage
+    STORAGE_AVAILABLE = True
+except ImportError:
+    STORAGE_AVAILABLE = False
+
 
 @tool
 def pack_workspace_to_zip(
@@ -63,12 +69,12 @@ def pack_workspace_to_zip(
 - 文件大小: {zip_size / 1024:.2f} KB
 - 包含内容: 完整的工作目录结构
 
-**下载说明:**
-当前环境下，你需要通过以下方式访问这个文件：
+**下一步操作:**
+请调用 `upload_and_generate_download_url` 工具将文件上传到云存储，获取可下载的链接。
 
-1. **如果支持文件下载**: 请求下载文件 `{zip_path}`
-2. **手动访问**: 在沙箱环境中执行 `cat {zip_path}` 查看内容（二进制文件无法直接查看）
-3. **复制文件**: 将文件复制到可访问的位置
+**或者手动访问:**
+当前环境下，你需要通过以下方式访问这个文件：
+- 在沙箱环境中执行 `cat {zip_path}` 查看内容（二进制文件无法直接查看）
 
 **目录结构预览:**
 ```
@@ -85,6 +91,90 @@ def pack_workspace_to_zip(
 """
     except Exception as e:
         return f"❌ 打包失败: {str(e)}"
+
+
+@tool
+def upload_and_generate_download_url(
+    file_path: str = "/tmp/research_workspace.zip",
+    runtime: ToolRuntime = None
+) -> str:
+    """Upload a file to object storage and generate a download URL.
+    
+    Args:
+        file_path: Path to the file to upload (e.g., "/tmp/research_workspace.zip").
+    
+    Returns:
+        Download URL for the uploaded file.
+    """
+    ctx = runtime.context if runtime else new_context(method="upload_and_generate_download_url")
+    
+    if not STORAGE_AVAILABLE:
+        return """❌ 对象存储功能当前不可用。
+
+请尝试以下替代方案：
+1. 使用 `copy_specific_file` 工具将文件复制到可访问的位置
+2. 使用 `read_file_content` 工具查看文件内容
+3. 直接在沙箱环境中访问文件
+"""
+    
+    # Check if file exists
+    if not os.path.exists(file_path):
+        return f"❌ 文件不存在: {file_path}"
+    
+    try:
+        # Initialize storage client
+        storage = S3SyncStorage(
+            endpoint_url=os.getenv("COZE_BUCKET_ENDPOINT_URL"),
+            access_key="",
+            secret_key="",
+            bucket_name=os.getenv("COZE_BUCKET_NAME"),
+            region="cn-beijing",
+        )
+        
+        # Get file name
+        file_name = os.path.basename(file_path)
+        
+        # Upload file
+        with open(file_path, 'rb') as f:
+            file_key = storage.stream_upload_file(
+                fileobj=f,
+                file_name=file_name,
+                content_type="application/zip",
+            )
+        
+        # Generate presigned URL (valid for 1 hour)
+        download_url = storage.generate_presigned_url(
+            key=file_key,
+            expire_time=3600  # 1 hour
+        )
+        
+        file_size = os.path.getsize(file_path)
+        
+        return f"""🎉 **文件已上传！可点击链接下载**
+
+**文件信息:**
+- 文件名: {file_name}
+- 文件大小: {file_size / 1024:.2f} KB
+- 存储密钥: {file_key}
+
+**下载链接（1小时内有效）:**
+📥 [{file_name}]({download_url})
+
+**使用说明:**
+1. 点击上面的链接即可下载文件
+2. 链接有效期 1 小时，过期后可重新生成
+3. 下载后使用任何压缩工具解压即可
+
+**提示:** 请尽快下载，链接将在 1 小时后过期。
+"""
+    except Exception as e:
+        return f"""❌ 上传失败: {str(e)}
+
+请尝试以下替代方案：
+1. 检查文件路径是否正确: {file_path}
+2. 使用 `copy_specific_file` 工具将文件复制到可访问的位置
+3. 查看错误详情并联系技术支持
+"""
 
 
 @tool
@@ -215,22 +305,25 @@ def generate_blog_copy_instruction(
         workspace_dir = os.path.join("/tmp", workspace_dir)
     
     workspace_name = os.path.basename(workspace_dir)
+    zip_path = os.path.join("/tmp", f"{workspace_name}.zip")
     
     return f"""# 📦 如何获取工作目录文件
 
-## 方法 1: 打包下载（推荐）
+## ⭐ 推荐方法：一键下载（超简单！）
 
-智能体可以帮你将整个工作目录打包成 ZIP 文件。
-
-**命令**:
+**步骤 1**: 先打包文件
 ```
 调用 pack_workspace_to_zip 工具
 ```
 
-**之后**:
+**步骤 2**: 上传并获取下载链接
 ```
-下载生成的 ZIP 文件: /tmp/{workspace_name}.zip
+调用 upload_and_generate_download_url 工具
+- file_path: "{zip_path}"
 ```
+
+**步骤 3**: 点击链接下载！
+你将得到一个可点击的下载链接，直接点击即可下载 ZIP 文件。
 
 ---
 
@@ -277,12 +370,12 @@ def generate_blog_copy_instruction(
 
 ---
 
-## 💡 建议
+## 💡 使用建议
 
-1. **如果需要全部内容**: 使用方法 1（打包下载）
-2. **如果只需要博客**: 使用方法 2 复制 `blog.md`
-3. **如果需要特定图片/提示词**: 使用方法 2 复制相应文件
-4. **如果只是预览**: 使用方法 3 或 4
+1. **推荐**: 使用"推荐方法"，一键打包并获取下载链接
+2. **快速**: 如果只需要博客，使用方法 2 复制 `blog.md`
+3. **预览**: 如果只是想看看内容，使用方法 3
+4. **浏览**: 如果想看看有哪些文件，使用方法 4
 
 ---
 

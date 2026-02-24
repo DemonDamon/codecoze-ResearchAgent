@@ -49,6 +49,7 @@ from tools.web_researcher import (
 )
 from tools.export_workspace import (
     pack_workspace_to_zip,
+    upload_and_generate_download_url,
     get_workspace_file_list,
     copy_specific_file,
     generate_blog_copy_instruction,
@@ -137,6 +138,7 @@ def build_agent(ctx=None):
         
         # Workspace export tools
         pack_workspace_to_zip,
+        upload_and_generate_download_url,
         get_workspace_file_list,
         copy_specific_file,
         generate_blog_copy_instruction,
