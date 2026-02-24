@@ -47,6 +47,12 @@ from tools.web_researcher import (
     search_best_practices,
     search_architecture_info,
 )
+from tools.export_workspace import (
+    pack_workspace_to_zip,
+    get_workspace_file_list,
+    copy_specific_file,
+    generate_blog_copy_instruction,
+)
 
 # Import checkpointer
 from storage.memory.memory_saver import get_memory_saver
@@ -128,6 +134,12 @@ def build_agent(ctx=None):
         search_multiple_queries,
         search_best_practices,
         search_architecture_info,
+        
+        # Workspace export tools
+        pack_workspace_to_zip,
+        get_workspace_file_list,
+        copy_specific_file,
+        generate_blog_copy_instruction,
     ]
     
     # Create agent
