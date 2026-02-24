@@ -4,6 +4,7 @@ annotated-types==0.7.0
 anyio==4.12.1
 APScheduler==3.11.2
 astroid==3.1.0
+attrs==25.4.0
 Authlib==1.6.6
 beautifulsoup4==4.14.3
 boto3==1.40.61
@@ -38,6 +39,7 @@ h2==4.3.0
 hpack==4.1.0
 httpcore==1.0.9
 httpx==0.28.1
+httpx-sse==0.4.3
 httpx-ws==0.8.2
 hyperframe==6.1.0
 idna==3.11
@@ -49,6 +51,8 @@ jiter==0.13.0
 jmespath==1.1.0
 jsonpatch==1.33
 jsonpointer==3.0.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
 langchain==1.0.3
 langchain-core==1.0.2
 langchain-openai==1.0.1
@@ -63,6 +67,7 @@ Mako==1.3.10
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
 mccabe==0.7.0
+mcp==1.26.0
 mdurl==0.1.2
 mmh3==5.2.0
 more-itertools==10.8.0
@@ -88,6 +93,7 @@ psycopg-pool==3.3.0
 psycopg2-binary==2.9.9
 pycparser==3.0
 pydantic==2.12.3
+pydantic-settings==2.13.1
 pydantic_core==2.41.4
 Pygments==2.19.2
 PyGObject==3.48.2
@@ -103,14 +109,17 @@ pytest-cov==7.0.0
 pytest-mock==3.15.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
+python-multipart==0.0.22
 python-pptx==1.0.2
 pytz==2025.2
 PyYAML==6.0.3
 realtime==2.27.3
+referencing==0.37.0
 regex==2026.1.15
 requests==2.32.5
 requests-toolbelt==1.0.0
 rich==14.2.0
+rpds-py==0.30.0
 s3transfer==0.14.0
 setuptools==68.1.2
 six==1.17.0
@@ -119,6 +128,7 @@ sniffio==1.3.1
 soupsieve==2.8.3
 sqlacodegen==3.2.0
 SQLAlchemy==2.0.44
+sse-starlette==3.2.0
 starlette==0.49.3
 storage3==2.27.3
 StrEnum==0.4.15
