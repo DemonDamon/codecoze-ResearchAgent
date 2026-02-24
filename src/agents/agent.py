@@ -47,6 +47,11 @@ from tools.web_researcher import (
     search_best_practices,
     search_architecture_info,
 )
+from tools.web_crawler import (
+    crawl_webpage,
+    batch_crawl_webpages,
+    extensive_search_and_crawl,
+)
 from tools.export_workspace import (
     pack_workspace_to_zip,
     upload_and_generate_download_url,
@@ -135,6 +140,11 @@ def build_agent(ctx=None):
         search_multiple_queries,
         search_best_practices,
         search_architecture_info,
+        
+        # Web crawler tools
+        crawl_webpage,
+        batch_crawl_webpages,
+        extensive_search_and_crawl,
         
         # Workspace export tools
         pack_workspace_to_zip,
