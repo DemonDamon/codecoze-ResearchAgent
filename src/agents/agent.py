@@ -7,6 +7,10 @@ Research Agent - 技术调研智能体
 - 生成专业的视觉提示词用于图像生成
 - 统一管理所有调研资料
 - 生成高质量的技术博客
+
+支持两种运行模式：
+1. Coze 平台模式：使用 COZE_WORKLOAD_IDENTITY_API_KEY 认证
+2. 本地开发模式：使用 OPENAI_API_KEY 调用模型
 """
 
 import os
@@ -78,38 +82,83 @@ class AgentState(MessagesState):
     messages: Annotated[list[AnyMessage], _windowed_messages]
 
 
+def _is_coze_platform() -> bool:
+    """检测是否运行在 Coze 平台"""
+    return bool(os.getenv("COZE_WORKLOAD_IDENTITY_API_KEY"))
+
+
+def _get_llm_config(ctx=None):
+    """获取 LLM 配置，支持 Coze 平台和本地开发两种模式"""
+    
+    # 确定工作目录
+    workspace_path = os.getenv("COZE_WORKSPACE_PATH") or os.getenv("WORKSPACE_PATH") or os.getcwd()
+    config_path = os.path.join(workspace_path, LLM_CONFIG)
+    
+    # 加载配置文件
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg = json.load(f)
+    
+    if _is_coze_platform():
+        # Coze 平台模式
+        api_key = os.getenv("COZE_WORKLOAD_IDENTITY_API_KEY")
+        base_url = os.getenv("COZE_INTEGRATION_MODEL_BASE_URL")
+        model = cfg['config'].get("model", "doubao-seed-2-0-pro-260215")
+        default_headers_dict = default_headers(ctx) if ctx else {}
+    else:
+        # 本地开发模式
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        model = os.getenv("OPENAI_MODEL") or cfg['config'].get("model", "gpt-4o")
+        default_headers_dict = {}
+        
+        if not api_key:
+            raise ValueError(
+                "本地运行需要设置 OPENAI_API_KEY 环境变量！\n"
+                "请创建 .env 文件并配置：\n"
+                "  OPENAI_API_KEY=sk-xxxx\n"
+                "  OPENAI_BASE_URL=https://api.openai.com/v1\n"
+                "  OPENAI_MODEL=gpt-4o"
+            )
+    
+    return {
+        "api_key": api_key,
+        "base_url": base_url,
+        "model": model,
+        "temperature": cfg['config'].get('temperature', 0.7),
+        "timeout": cfg['config'].get('timeout', 600),
+        "thinking": cfg['config'].get('thinking', 'disabled'),
+        "default_headers": default_headers_dict,
+        "system_prompt": cfg.get("sp"),
+    }
+
+
 def build_agent(ctx=None):
     """
     构建技术调研智能体
     
+    支持两种运行模式：
+    1. Coze 平台模式：自动使用平台认证
+    2. 本地开发模式：使用 OPENAI_API_KEY
+    
     Returns:
         Agent 实例
     """
-    workspace_path = os.getenv("COZE_WORKSPACE_PATH", "/workspace/projects")
-    config_path = os.path.join(workspace_path, LLM_CONFIG)
-    
-    # Load LLM configuration
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = json.load(f)
-    
-    # Get API configuration from environment
-    api_key = os.getenv("COZE_WORKLOAD_IDENTITY_API_KEY")
-    base_url = os.getenv("COZE_INTEGRATION_MODEL_BASE_URL")
+    llm_config = _get_llm_config(ctx)
     
     # Initialize LLM
     llm = ChatOpenAI(
-        model=cfg['config'].get("model"),
-        api_key=api_key,
-        base_url=base_url,
-        temperature=cfg['config'].get('temperature', 0.7),
+        model=llm_config["model"],
+        api_key=llm_config["api_key"],
+        base_url=llm_config["base_url"],
+        temperature=llm_config["temperature"],
         streaming=True,
-        timeout=cfg['config'].get('timeout', 600),
+        timeout=llm_config["timeout"],
         extra_body={
             "thinking": {
-                "type": cfg['config'].get('thinking', 'disabled')
+                "type": llm_config["thinking"]
             }
         },
-        default_headers=default_headers(ctx) if ctx else {}
+        default_headers=llm_config["default_headers"]
     )
     
     # Define tools
@@ -157,7 +206,7 @@ def build_agent(ctx=None):
     # Create agent
     agent = create_agent(
         model=llm,
-        system_prompt=cfg.get("sp"),
+        system_prompt=llm_config["system_prompt"],
         tools=tools,
         checkpointer=get_memory_saver(),
         state_schema=AgentState,
