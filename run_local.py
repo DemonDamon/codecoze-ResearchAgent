@@ -53,7 +53,14 @@ async def main():
     print("-" * 60)
     
     # 构建 agent
-    agent = build_agent()
+    try:
+        agent = build_agent()
+        print("✅ Agent 初始化成功")
+    except Exception as e:
+        print(f"❌ Agent 初始化失败: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
     
     # 会话配置
     config = {"configurable": {"thread_id": "local-session"}}
@@ -80,24 +87,36 @@ async def main():
             # 调用 agent
             print("\n🤖 Agent: ", end="", flush=True)
             
-            response_text = ""
-            async for chunk in agent.astream(
-                {"messages": [{"role": "user", "content": user_input}]},
-                config=config
-            ):
-                # 处理流式输出
-                if "agent" in chunk:
-                    if "messages" in chunk["agent"]:
-                        for msg in chunk["agent"]["messages"]:
-                            if hasattr(msg, "content") and msg.content:
-                                content = msg.content
-                                if content != response_text:
-                                    # 只打印新增的部分
-                                    new_part = content[len(response_text):]
-                                    print(new_part, end="", flush=True)
-                                    response_text = content
+            full_response = ""
             
-            print()  # 换行
+            try:
+                # 使用 ainvoke 获取完整响应（更稳定）
+                result = await agent.ainvoke(
+                    {"messages": [{"role": "user", "content": user_input}]},
+                    config=config
+                )
+                
+                # 提取响应内容
+                if result and "messages" in result:
+                    last_message = result["messages"][-1]
+                    if hasattr(last_message, "content"):
+                        full_response = last_message.content
+                    elif isinstance(last_message, dict):
+                        full_response = last_message.get("content", "")
+                
+                if full_response:
+                    print(full_response)
+                else:
+                    print("(无响应内容)")
+                    # 打印调试信息
+                    print(f"\n[DEBUG] result keys: {result.keys() if result else 'None'}")
+                    if result and "messages" in result:
+                        print(f"[DEBUG] messages count: {len(result['messages'])}")
+                        
+            except Exception as e:
+                print(f"\n❌ 调用失败: {e}")
+                import traceback
+                traceback.print_exc()
             
         except KeyboardInterrupt:
             print("\n\n👋 再见！")

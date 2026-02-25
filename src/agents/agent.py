@@ -117,7 +117,21 @@ def _get_llm_config(ctx=None):
                 "请创建 .env 文件并配置：\n"
                 "  OPENAI_API_KEY=sk-xxxx\n"
                 "  OPENAI_BASE_URL=https://api.openai.com/v1\n"
-                "  OPENAI_MODEL=gpt-4o"
+                "  OPENAI_MODEL=gpt-4o\n\n"
+                "火山引擎用户注意：\n"
+                "  OPENAI_MODEL 需要填写 endpoint_id（格式：ep-xxxx-xxxx...）\n"
+                "  而不是模型名称！"
+            )
+        
+        # 检查火山引擎配置是否正确
+        if "volces.com" in base_url and not model.startswith("ep-"):
+            import warnings
+            warnings.warn(
+                f"\n⚠️  火山引擎配置警告：\n"
+                f"  当前模型名称: {model}\n"
+                f"  火山引擎需要使用 endpoint_id（格式：ep-xxxx-xxxx...）\n"
+                f"  请检查 OPENAI_MODEL 环境变量是否正确配置\n"
+                f"  获取方式：火山引擎控制台 → 推理接入点 → 复制接入点 ID"
             )
     
     return {
