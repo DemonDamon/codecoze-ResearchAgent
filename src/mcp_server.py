@@ -173,6 +173,40 @@ async def list_tools() -> List[Tool]:
                 },
                 "required": ["repo_url"]
             }
+        ),
+        Tool(
+            name="regenerate_visual_prompt",
+            description="""
+基于「文本转绘图描述」规约，使用 LLM 将文本重新生成为 NanoBanana 格式的视觉提示词。
+
+支持三种类型：
+- text_to_visual：通用文本/概念转视觉描述
+- flow：流程图描述（如用户登录流程、业务流程）
+- architecture：架构图描述（如系统组件、层次关系）
+
+生成的提示词保存到 workspace/generated/visual_prompts/ 目录，可直接用于 Lovart AI 等图像生成。
+            """.strip(),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "content_description": {
+                        "type": "string",
+                        "description": "要转化为视觉描述的内容（概念、流程、架构等文本）"
+                    },
+                    "prompt_type": {
+                        "type": "string",
+                        "enum": ["text_to_visual", "flow", "architecture"],
+                        "default": "text_to_visual",
+                        "description": "提示词类型：text_to_visual(通用)、flow(流程图)、architecture(架构图)"
+                    },
+                    "workspace_name": {
+                        "type": "string",
+                        "description": "工作目录名称（可选），默认 research_workspace。保存到 /tmp/{workspace_name}/generated/visual_prompts/",
+                        "default": "research_workspace"
+                    }
+                },
+                "required": ["content_description"]
+            }
         )
     ]
 
@@ -189,6 +223,8 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
             return await _handle_crawl_webpage(arguments)
         elif name == "crawl_github":
             return await _handle_crawl_github(arguments)
+        elif name == "regenerate_visual_prompt":
+            return await _handle_regenerate_visual_prompt(arguments)
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
     except Exception as e:
@@ -379,6 +415,47 @@ async def _handle_crawl_github(arguments: Dict[str, Any]) -> List[TextContent]:
         workspace_dir=f"/tmp/{workspace_name}"
     )
     
+    return [TextContent(type="text", text=result)]
+
+
+async def _handle_regenerate_visual_prompt(arguments: Dict[str, Any]) -> List[TextContent]:
+    """Handle regenerate visual prompt tool call."""
+    from tools.image_generator import (
+        generate_visual_prompt,
+        generate_flow_diagram_prompt,
+        generate_architecture_diagram_prompt,
+    )
+
+    content_description = arguments.get("content_description")
+    prompt_type = arguments.get("prompt_type", "text_to_visual")
+    workspace_name = arguments.get("workspace_name", "research_workspace")
+
+    if not content_description:
+        return [TextContent(type="text", text="错误：content_description 为必填参数")]
+
+    workspace_dir = f"/tmp/{workspace_name}"
+    logger.info(f"Regenerating visual prompt: type={prompt_type}, workspace={workspace_name}")
+
+    # Run in thread pool to avoid blocking (LLM call can be slow)
+    def _run():
+        if prompt_type == "flow":
+            return generate_flow_diagram_prompt.invoke({
+                "flow_description": content_description,
+                "workspace_dir": workspace_dir,
+            })
+        elif prompt_type == "architecture":
+            return generate_architecture_diagram_prompt.invoke({
+                "architecture_description": content_description,
+                "workspace_dir": workspace_dir,
+            })
+        else:
+            return generate_visual_prompt.invoke({
+                "content_description": content_description,
+                "prompt_type": "text_to_visual",
+                "workspace_dir": workspace_dir,
+            })
+
+    result = await asyncio.to_thread(_run)
     return [TextContent(type="text", text=result)]
 
 
