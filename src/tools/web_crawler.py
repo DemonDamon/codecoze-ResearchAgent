@@ -310,6 +310,114 @@ def extensive_search_and_crawl(
     if not is_coze_platform and not has_bocha:
         return _local_extensive_crawl(topic, workspace_dir)
     
+    # === 步骤1: 先尝试基础搜索 ===
+    all_urls = []
+    search_results = []
+    
+    # 基础查询列表（不带中文后缀）
+    basic_queries = [
+        topic,  # 原始名称
+        topic.replace("-", " "),  # 替换连字符
+        topic.replace("-", ""),  # 移除连字符
+        f"{topic} github",  # 添加 github 关键词
+        f"{topic} project",  # 添加 project 关键词
+    ]
+    
+    for query in basic_queries:
+        try:
+            if has_bocha:
+                response = _bocha_search_request(query, results_per_query)
+                web_items = response.get("web_pages", [])
+                for item in web_items:
+                    url = item.get("url") or item.get("link")
+                    if url and url not in all_urls:
+                        all_urls.append(url)
+                        search_results.append({
+                            'query': query,
+                            'title': item.get('title', ''),
+                            'url': url,
+                            'snippet': item.get('snippet', item.get('description', '')),
+                            'site': item.get('site_name', '')
+                        })
+            elif is_coze_platform:
+                from coze_coding_dev_sdk import SearchClient
+                search_client = SearchClient(ctx=ctx)
+                response = search_client.web_search(
+                    query=query,
+                    count=results_per_query,
+                    need_summary=True
+                )
+                if response.web_items:
+                    for item in response.web_items:
+                        if item.url and item.url not in all_urls:
+                            all_urls.append(item.url)
+                            search_results.append({
+                                'query': query,
+                                'title': item.title,
+                                'url': item.url,
+                                'snippet': item.snippet,
+                                'site': item.site_name
+                            })
+        except Exception:
+            pass
+    
+    # === 步骤2: 如果基础搜索没结果，尝试检测 GitHub 项目 ===
+    if not all_urls:
+        # 尝试直接搜索 GitHub
+        github_query = f"{topic} site:github.com"
+        try:
+            if has_bocha:
+                response = _bocha_search_request(github_query, 10)
+                web_items = response.get("web_pages", [])
+                for item in web_items:
+                    url = item.get("url") or item.get("link")
+                    if url and "github.com" in url and url not in all_urls:
+                        all_urls.append(url)
+                        search_results.append({
+                            'query': github_query,
+                            'title': item.get('title', ''),
+                            'url': url,
+                            'snippet': item.get('snippet', item.get('description', '')),
+                            'site': 'GitHub'
+                        })
+        except Exception:
+            pass
+    
+    # === 步骤3: 如果还是没结果，返回友好的提示 ===
+    if not all_urls:
+        return f"""# 搜索结果为空
+
+**主题**: {topic}
+
+⚠️ 未能找到关于 "{topic}" 的搜索结果。可能的原因：
+
+1. **项目名称可能不完整或有误**：请确认名称是否正确
+2. **项目较新或较小众**：搜索引擎可能尚未收录
+3. **需要更具体的信息**：如 GitHub URL、文档链接等
+
+## 建议操作
+
+### 方式1：提供 GitHub 仓库地址
+如果你知道 GitHub 地址，请直接提供：
+```
+https://github.com/用户名/仓库名
+```
+
+### 方式2：提供相关文档链接
+如果你有相关文档或文章链接，请提供：
+```
+https://docs.example.com/article
+```
+
+### 方式3：提供更多信息
+- 项目的完整名称是什么？
+- 项目的主要功能是什么？
+- 有相关的关键词吗？
+
+我会根据你提供的信息继续调研。
+"""
+    
+    # === 步骤4: 继续执行扩展搜索 ===
     # Generate diverse search queries
     query_templates = [
         f"{topic} 架构原理",
@@ -334,10 +442,7 @@ def extensive_search_and_crawl(
         f"{topic} 运维管理",
     ]
     
-    # Collect all URLs
-    all_urls = []
-    search_results = []
-    
+    # 继续扩展搜索（all_urls 已有基础搜索结果）
     for i in range(min(num_queries, len(query_templates))):
         query = query_templates[i]
         
@@ -602,6 +707,9 @@ def _bocha_search_request(query: str, count: int = 10) -> Dict:
     """
     import os
     import requests
+    import logging
+    
+    logger = logging.getLogger(__name__)
     
     api_key = os.getenv("BOCHA_API_KEY")
     if not api_key:
@@ -619,6 +727,7 @@ def _bocha_search_request(query: str, count: int = 10) -> Dict:
     }
     
     try:
+        logger.debug(f"Bocha 搜索请求: {query}")
         response = requests.post(
             "https://api.bocha.io/v1/search",
             headers=headers,
@@ -626,6 +735,16 @@ def _bocha_search_request(query: str, count: int = 10) -> Dict:
             timeout=30
         )
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        web_pages = result.get("web_pages", [])
+        logger.debug(f"Bocha 搜索结果: {len(web_pages)} 条")
+        return result
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"Bocha API HTTP 错误: {e}")
+        return {"web_pages": [], "error": f"HTTP错误: {e}"}
+    except requests.exceptions.Timeout:
+        logger.error("Bocha API 超时")
+        return {"web_pages": [], "error": "请求超时"}
     except Exception as e:
+        logger.error(f"Bocha API 异常: {e}")
         return {"web_pages": [], "error": str(e)}

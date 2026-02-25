@@ -43,6 +43,9 @@ class BochaSearchClient:
         Returns:
             搜索结果字典
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -55,15 +58,27 @@ class BochaSearchClient:
         }
         
         try:
+            logger.info(f"Bocha API 请求: query={query}, count={count}")
             response = requests.post(
                 f"{self.base_url}/search",
                 headers=headers,
                 json=payload,
                 timeout=30
             )
+            logger.info(f"Bocha API 响应状态: {response.status_code}")
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            web_pages = result.get("web_pages", [])
+            logger.info(f"Bocha API 返回结果数: {len(web_pages)}")
+            return result
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"Bocha API HTTP 错误: {e}")
+            return {"error": f"HTTP错误: {e}", "web_pages": []}
+        except requests.exceptions.Timeout:
+            logger.error("Bocha API 超时")
+            return {"error": "请求超时", "web_pages": []}
         except Exception as e:
+            logger.error(f"Bocha API 异常: {e}")
             return {"error": str(e), "web_pages": []}
     
     def web_search(self, query: str, count: int = 10) -> Dict[str, Any]:
@@ -96,6 +111,14 @@ def _bocha_search(query: str, count: int = 10) -> str:
     # 解析搜索结果
     web_pages = result.get("web_pages", [])
     summary = result.get("summary", "")
+    
+    # 如果没有结果，尝试 GitHub 搜索
+    if not web_pages:
+        github_result = client.search(f"{query} site:github.com", count)
+        github_pages = github_result.get("web_pages", [])
+        if github_pages:
+            web_pages = github_pages
+            summary = f"（通过 GitHub 搜索找到）{github_result.get('summary', '')}"
     
     markdown_content = f"""# 网络搜索结果
 
@@ -130,7 +153,19 @@ def _bocha_search(query: str, count: int = 10) -> str:
         markdown_content += "\n---\n\n"
     
     if not web_pages:
-        markdown_content += "未找到搜索结果。\n"
+        markdown_content += """未找到搜索结果。
+
+## 建议
+
+1. **检查项目名称**：确认名称拼写正确
+2. **提供 GitHub URL**：如果你知道项目的 GitHub 地址，请直接提供
+3. **提供文档链接**：如果你有相关文档链接，请提供
+
+示例：
+```
+请分析 https://github.com/TurixAI/TuriX-CUA
+```
+"""
     
     return markdown_content
 
