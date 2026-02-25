@@ -108,6 +108,34 @@ def upload_and_generate_download_url(
     """
     ctx = runtime.context if runtime else new_context(method="upload_and_generate_download_url")
     
+    # 检查是否在 Coze 平台
+    is_coze_platform = bool(os.getenv("COZE_WORKLOAD_IDENTITY_API_KEY"))
+    
+    if not is_coze_platform:
+        # 本地模式：直接返回文件路径
+        if not os.path.exists(file_path):
+            return f"❌ 文件不存在: {file_path}"
+        
+        file_size = os.path.getsize(file_path)
+        file_name = os.path.basename(file_path)
+        
+        return f"""📁 **本地模式 - 文件已准备好**
+
+⚠️ 本地运行模式下，对象存储服务不可用。
+
+**文件信息:**
+- 文件名: {file_name}
+- 文件大小: {file_size / 1024:.2f} KB
+- 本地路径: {file_path}
+
+**如何获取文件:**
+1. 直接访问本地路径: `{file_path}`
+2. 使用文件管理器打开目录
+3. 或在终端执行: `open {os.path.dirname(file_path)}` (macOS) / `explorer {os.path.dirname(file_path)}` (Windows)
+
+**提示:** 如需云存储功能，请部署到 Coze 平台。
+"""
+    
     if not STORAGE_AVAILABLE:
         return """❌ 对象存储功能当前不可用。
 

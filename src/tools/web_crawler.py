@@ -296,6 +296,13 @@ def extensive_search_and_crawl(
     if not os.path.isabs(workspace_dir):
         workspace_dir = os.path.join("/tmp", workspace_dir)
     
+    # 检查是否在 Coze 平台
+    is_coze_platform = bool(os.getenv("COZE_WORKLOAD_IDENTITY_API_KEY"))
+    
+    if not is_coze_platform:
+        # 本地模式降级：直接爬取 GitHub 和常见文档站点
+        return _local_extensive_crawl(topic, workspace_dir)
+    
     from coze_coding_dev_sdk import SearchClient
     
     # Generate diverse search queries
@@ -421,3 +428,122 @@ def extensive_search_and_crawl(
         f.write(crawl_summary)
     
     return crawl_summary
+
+
+def _local_extensive_crawl(topic: str, workspace_dir: str) -> str:
+    """本地模式下的扩展爬取：爬取 GitHub 和常见文档站点
+    
+    Args:
+        topic: 调研主题
+        workspace_dir: 工作目录
+    
+    Returns:
+        爬取结果摘要
+    """
+    import re
+    
+    # 解析主题，判断是否是 GitHub URL
+    github_pattern = r'https?://github\.com/([^/]+)/([^/]+)'
+    github_match = re.match(github_pattern, topic)
+    
+    # 构建要爬取的 URL 列表
+    urls_to_crawl = []
+    
+    if github_match:
+        # 如果是 GitHub URL，爬取相关页面
+        owner, repo = github_match.groups()
+        base_url = f"https://github.com/{owner}/{repo}"
+        urls_to_crawl = [
+            base_url,
+            f"{base_url}/blob/main/README.md",
+            f"{base_url}/blob/master/README.md",
+            f"{base_url}/wiki",
+            f"{base_url}/tree/main/docs",
+            f"{base_url}/tree/main/documentation",
+            f"https://raw.githubusercontent.com/{owner}/{repo}/main/README.md",
+            f"https://raw.githubusercontent.com/{owner}/{repo}/master/README.md",
+        ]
+        topic_name = repo
+    else:
+        # 如果是主题名称，尝试构建常见文档站点 URL
+        topic_slug = topic.lower().replace(' ', '-').replace('_', '-')
+        topic_name = topic
+        
+        # 常见文档站点模式
+        urls_to_crawl = [
+            f"https://github.com/search?q={topic}&type=repositories",
+            f"https://{topic_slug}.readthedocs.io",
+            f"https://{topic_slug}.github.io",
+            f"https://docs.{topic_slug}.io",
+            f"https://www.{topic_slug}.io",
+            f"https://{topic_slug}.org",
+        ]
+    
+    # 开始爬取
+    summary = f"""# 本地模式爬取报告
+
+**主题**: {topic_name}
+**模式**: 本地运行（无搜索服务）
+
+⚠️ 本地运行模式下，无法使用网络搜索服务。以下是基于常见模式的爬取结果。
+
+## 正在爬取...
+
+"""
+    
+    crawled_count = 0
+    failed_count = 0
+    
+    for i, url in enumerate(urls_to_crawl):
+        result = _crawl_webpage_internal(url, workspace_dir)
+        if result['success']:
+            crawled_count += 1
+            summary += f"✅ [{i+1}/{len(urls_to_crawl)}] {url}\n"
+        else:
+            failed_count += 1
+            summary += f"❌ [{i+1}/{len(urls_to_crawl)}] {url} - {result.get('error', 'Failed')}\n"
+    
+    summary += f"""
+
+## 爬取完成
+
+**成功**: {crawled_count}
+**失败**: {failed_count}
+**总计**: {len(urls_to_crawl)}
+
+## 保存位置
+
+- 网页内容: {workspace_dir}/sources/web/
+- 下载图片: {workspace_dir}/sources/manual_images/
+
+---
+
+## 💡 获取更多资料的建议
+
+由于本地模式下搜索服务不可用，你可以：
+
+### 方式一：手动提供 URL
+提供你知道的相关网页 URL，例如：
+```
+请爬取以下网页：
+- https://example.com/article1
+- https://example.com/article2
+```
+
+### 方式二：提供 GitHub 仓库
+提供 GitHub 仓库 URL，系统会自动爬取相关文档：
+```
+请帮我调研：https://github.com/owner/repo
+```
+
+### 方式三：部署到 Coze 平台
+如需完整的搜索功能，可以将项目部署到 Coze 平台。
+
+"""
+    
+    # Save summary
+    summary_path = os.path.join(workspace_dir, "sources", "web", "crawl_summary.md")
+    with open(summary_path, 'w', encoding='utf-8') as f:
+        f.write(summary)
+    
+    return summary
