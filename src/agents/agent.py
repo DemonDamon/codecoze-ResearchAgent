@@ -14,14 +14,15 @@ Research Agent - 技术调研智能体
 """
 
 import os
-import json
 from typing import Annotated
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langgraph.graph import MessagesState
 from langgraph.graph.message import add_messages
 from langchain_core.messages import AnyMessage
-from coze_coding_utils.runtime_ctx.context import default_headers, new_context
+from coze_coding_utils.runtime_ctx.context import new_context
+
+from utils.llm_config import get_llm_config
 
 # Import tools
 from tools.file_manager import (
@@ -67,8 +68,6 @@ from tools.export_workspace import (
 # Import checkpointer
 from storage.memory.memory_saver import get_memory_saver
 
-LLM_CONFIG = "config/agent_llm_config.json"
-
 # 默认保留最近 20 轮对话 (40 条消息)
 MAX_MESSAGES = 40
 
@@ -82,60 +81,6 @@ class AgentState(MessagesState):
     messages: Annotated[list[AnyMessage], _windowed_messages]
 
 
-def _is_coze_platform() -> bool:
-    """检测是否运行在 Coze 平台"""
-    return bool(os.getenv("COZE_WORKLOAD_IDENTITY_API_KEY"))
-
-
-def _get_llm_config(ctx=None):
-    """获取 LLM 配置，支持 Coze 平台和本地开发两种模式"""
-    
-    # 确定工作目录
-    workspace_path = os.getenv("COZE_WORKSPACE_PATH") or os.getenv("WORKSPACE_PATH") or os.getcwd()
-    config_path = os.path.join(workspace_path, LLM_CONFIG)
-    
-    # 加载配置文件
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = json.load(f)
-    
-    if _is_coze_platform():
-        # Coze 平台模式
-        api_key = os.getenv("COZE_WORKLOAD_IDENTITY_API_KEY")
-        base_url = os.getenv("COZE_INTEGRATION_MODEL_BASE_URL")
-        model = cfg['config'].get("model", "doubao-seed-2-0-pro-260215")
-        default_headers_dict = default_headers(ctx) if ctx else {}
-    else:
-        # 本地开发模式
-        api_key = os.getenv("OPENAI_API_KEY")
-        base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        model = os.getenv("OPENAI_MODEL") or cfg['config'].get("model", "gpt-4o")
-        default_headers_dict = {}
-        
-        if not api_key:
-            raise ValueError(
-                "本地运行需要设置 OPENAI_API_KEY 环境变量！\n"
-                "请创建 .env 文件并配置：\n"
-                "  OPENAI_API_KEY=你的API-Key\n"
-                "  OPENAI_BASE_URL=https://api.openai.com/v1\n"
-                "  OPENAI_MODEL=gpt-4o\n\n"
-                "火山引擎配置示例：\n"
-                "  OPENAI_API_KEY=你的火山API-Key\n"
-                "  OPENAI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3\n"
-                "  OPENAI_MODEL=doubao-seed-1-8-251228"
-            )
-    
-    return {
-        "api_key": api_key,
-        "base_url": base_url,
-        "model": model,
-        "temperature": cfg['config'].get('temperature', 0.7),
-        "timeout": cfg['config'].get('timeout', 600),
-        "thinking": cfg['config'].get('thinking', 'disabled'),
-        "default_headers": default_headers_dict,
-        "system_prompt": cfg.get("sp"),
-    }
-
-
 def build_agent(ctx=None):
     """
     构建技术调研智能体
@@ -147,7 +92,7 @@ def build_agent(ctx=None):
     Returns:
         Agent 实例
     """
-    llm_config = _get_llm_config(ctx)
+    llm_config = get_llm_config(ctx)
     
     # Initialize LLM
     llm = ChatOpenAI(
