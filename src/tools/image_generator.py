@@ -1,14 +1,92 @@
 """Image generation tool for research agent.
 
-Generates visual prompts based on nanobanana specification and creates images using Lovart AI.
+Generates visual prompts based on「文本转绘图描述」规约 and creates images using Lovart AI.
 """
 
+import logging
 import os
-import json
 from typing import Optional
+
+logger = logging.getLogger(__name__)
+
 from langchain.tools import tool
 from langchain.tools import ToolRuntime
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from coze_coding_utils.runtime_ctx.context import new_context
+from utils.llm_config import get_llm_config
+
+# 规约文件路径（相对于工作区根目录）
+SPEC_FILE = "prompts/nanobanana_prompt_generation_instruct.md"
+
+SYSTEM_PROMPT = """\
+你现在的身份是【高级视觉信息设计师】，精通信息设计与视觉传达。
+你的核心任务是将用户提供的【文本/代码】转化为一段用于绘图的【中文视觉描述】。
+严格遵循用户给出的规约，直接输出最终结果，不要包含任何解释性废话。"""
+
+
+def _load_spec_content() -> str:
+    """加载「文本转绘图描述」规约内容，作为参考资料嵌入 prompt。"""
+    workspace_path = (
+        os.getenv("COZE_WORKSPACE_PATH")
+        or os.getenv("WORKSPACE_PATH")
+        or os.getcwd()
+    )
+    spec_path = os.path.join(workspace_path, SPEC_FILE)
+    if os.path.isfile(spec_path):
+        with open(spec_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        logger.info("规约文件加载成功: %s (%d 字符)", spec_path, len(content))
+        return content
+    logger.warning("规约文件未找到: %s，将使用 fallback 模式", spec_path)
+    return ""
+
+
+def _invoke_llm_for_visual_prompt(user_content: str) -> str:
+    """使用规约驱动 LLM 将文本转为结构化中文视觉描述。"""
+    llm_config = get_llm_config()
+    spec_content = _load_spec_content()
+
+    llm = ChatOpenAI(
+        model=llm_config["model"],
+        api_key=llm_config["api_key"],
+        base_url=llm_config["base_url"],
+        temperature=0.3,
+        streaming=False,
+        timeout=llm_config.get("timeout", 600),
+        extra_body={"thinking": {"type": "disabled"}},
+        default_headers=llm_config.get("default_headers", {}),
+    )
+
+    if spec_content:
+        user_msg = (
+            "请仔细阅读并严格执行以下【文本转绘图描述规约】中的所有定义，特别是以下两点：\n"
+            "1. **视觉化映射**：对于抽象逻辑，你需要主动想象并定义它的形状（如：判断用菱形）和布局（如：从上到下）。\n"
+            "2. **输出格式**：必须严格遵守规约中【Section 3 输出模板】的格式输出。\n\n"
+            f"<规约>\n{spec_content}\n</规约>\n\n"
+            "---\n"
+            f"【待处理的输入内容】：\n{user_content}\n\n"
+            "---\n\n"
+            "请开始处理，直接输出最终的中文视觉描述结果，不要包含任何解释性废话。"
+        )
+    else:
+        user_msg = (
+            "请将以下文本/代码转化为结构化的中文视觉描述，用于驱动文生图模型。\n"
+            "要求：主动推断布局和配色，输出包含【主题与布局设想】【视觉模块详解】【风格与配色方案】【技术参数建议】四个部分。\n\n"
+            "---\n"
+            f"【待处理的输入内容】：\n{user_content}\n\n"
+            "---\n\n"
+            "请直接输出最终的中文视觉描述结果。"
+        )
+
+    messages = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=user_msg),
+    ]
+
+    response = llm.invoke(messages)
+    return response.content if hasattr(response, "content") else str(response)
 
 
 @tool
@@ -34,10 +112,11 @@ def generate_visual_prompt(
     if not os.path.isabs(workspace_dir):
         workspace_dir = os.path.join("/tmp", workspace_dir)
     
-    # Generate visual prompt based on nanobanana specification
-    # This is a template that the LLM will fill in with actual content
+    # 使用「文本转绘图描述」规约 + LLM 生成结构化视觉描述
+    visual_prompt = _invoke_llm_for_visual_prompt(content_description)
     
-    visual_prompt = f"""# 视觉描述提示词 (基于 NanoBanana 规范)
+    # 包装为完整 markdown 文档
+    full_prompt = f"""# 视觉描述提示词 (基于「文本转绘图描述」规约)
 
 ## 输入内容
 {content_description}
@@ -46,26 +125,9 @@ def generate_visual_prompt(
 
 ## 生成的视觉描述
 
-### 主题与布局设想
-[基于内容描述推断整体结构、流向和背景风格]
-
-### 视觉模块详解
-[将内容逻辑拆解为视觉区域，描述具体的节点形状、颜色和文字内容]
-
-### 风格与配色方案
-[指定具体的配色板，如"科技蓝"、"清新绿"等，以及线条风格]
-
-### 技术参数建议
-文字必须清晰可辨。保持文字与背景的高对比度。建议 16:9 比例。2K 分辨率。使用标准流程图符号。矢量图风格，扁平化设计，专业学术论文图表风格。
+{visual_prompt}
 
 ---
-
-## 生成说明
-**注意**: 以上是 visual prompt 的模板结构。在实际使用时，需要：
-1. 基于具体内容描述填写"主题与布局设想"部分
-2. 根据逻辑流程设计"视觉模块详解"
-3. 选择合适的"风格与配色方案"
-4. 确保所有文字使用简体中文（核心技术术语除外）
 
 ## 使用方式
 将上述视觉描述复制到 Lovart AI (https://www.lovart.ai/zh/home) 进行图像生成。
@@ -82,9 +144,9 @@ def generate_visual_prompt(
     full_path = os.path.join(prompts_dir, filename)
     
     with open(full_path, 'w', encoding='utf-8') as f:
-        f.write(visual_prompt)
+        f.write(full_prompt)
     
-    return f"Visual prompt generated and saved to: {full_path}\n\n{visual_prompt}"
+    return f"Visual prompt generated and saved to: {full_path}\n\n{full_prompt}"
 
 
 @tool
@@ -108,7 +170,12 @@ def generate_flow_diagram_prompt(
     if not os.path.isabs(workspace_dir):
         workspace_dir = os.path.join("/tmp", workspace_dir)
     
-    flow_prompt = f"""# 流程图视觉描述提示词
+    # 使用「文本转绘图描述」规约 + LLM 生成流程图视觉描述
+    flow_content = _invoke_llm_for_visual_prompt(
+        f"【流程图描述】\n{flow_description}"
+    )
+    
+    flow_prompt = f"""# 流程图视觉描述提示词 (基于「文本转绘图描述」规约)
 
 ## 流程描述
 {flow_description}
@@ -117,45 +184,7 @@ def generate_flow_diagram_prompt(
 
 ## 视觉描述（流程图）
 
-### 主题与布局设想
-展示上述流程的流程图。整体采用从上到下或从左到右的流向（根据流程复杂度选择）。背景为干净的纯白或浅灰色，强调逻辑清晰度。
-
-### 视觉模块详解
-
-1. **起点节点**:
-   - 形状: 圆形或胶囊形
-   - 文字: [流程开始，如"开始"或"用户输入"]
-   - 颜色: 绿色系
-
-2. **处理节点**:
-   - 形状: 圆角矩形
-   - 文字: [处理步骤，如"认证服务验证"]
-   - 颜色: 蓝色系
-   - 连接线: 标注[数据流转描述]
-
-3. **判断节点**:
-   - 形状: 菱形
-   - 文字: [条件判断，如"验证成功？"]
-   - 颜色: 黄色或橙色系
-
-4. **结果分支**:
-   - 分支1: 箭头向下/向右，标注"是"，指向[成功结果节点]
-   - 分支2: 箭头向右，标注"否"，指向[失败结果节点]
-   - 颜色: 成功用绿色，失败用红色
-
-5. **终点节点**:
-   - 形状: 圆形或胶囊形
-   - 文字: [流程结束，如"结束"或具体结果]
-   - 颜色: 绿色系（成功）或红色系（失败）
-
-### 风格与配色方案
-- 扁平化矢量风格
-- 采用"红绿灯"逻辑：正常流程用蓝/绿，错误流程用红/橙
-- 字体使用无衬线黑体
-- 线条流畅，箭头清晰
-
-### 技术参数建议
-文字必须清晰可辨。保持文字与背景的高对比度。建议 16:9 比例。2K 分辨率。使用标准流程图符号。矢量图风格，扁平化设计，专业学术论文图表风格。
+{flow_content}
 
 ---
 
@@ -197,7 +226,12 @@ def generate_architecture_diagram_prompt(
     if not os.path.isabs(workspace_dir):
         workspace_dir = os.path.join("/tmp", workspace_dir)
     
-    arch_prompt = f"""# 架构图视觉描述提示词
+    # 使用「文本转绘图描述」规约 + LLM 生成架构图视觉描述
+    arch_content = _invoke_llm_for_visual_prompt(
+        f"【架构图描述】\n{architecture_description}"
+    )
+    
+    arch_prompt = f"""# 架构图视觉描述提示词 (基于「文本转绘图描述」规约)
 
 ## 架构描述
 {architecture_description}
@@ -206,50 +240,7 @@ def generate_architecture_diagram_prompt(
 
 ## 视觉描述（架构图）
 
-### 主题与布局设想
-展示系统架构的分层结构。整体采用从上到下或从左到右的层级布局。背景为干净的纯白或浅灰色，突出架构的层次感和模块化。
-
-### 视觉模块详解
-
-1. **顶层（展示层/用户层）**:
-   - 形状: 圆角矩形或卡片
-   - 文字: [用户界面、前端应用等]
-   - 颜色: 蓝色系
-   - 位置: 图表顶部或左侧
-
-2. **中间层（业务逻辑层/服务层）**:
-   - 形状: 矩形或容器框
-   - 文字: [各个微服务、API 网关、业务模块等]
-   - 颜色: 绿色系或紫色系
-   - 包含: 多个子模块，用虚线框分隔
-   - 位置: 图表中部
-
-3. **底层（数据层/基础设施层）**:
-   - 形状: 圆柱体或横向矩形
-   - 文字: [数据库、缓存、消息队列、存储等]
-   - 颜色: 橙色系或灰色系
-   - 位置: 图表底部或右侧
-
-4. **连接关系**:
-   - 实线箭头: 表示主要数据流或调用关系
-   - 虚线箭头: 表示异步通信或事件驱动
-   - 双向箭头: 表示双向交互
-   - 颜色: 灰色或深蓝色
-
-5. **外部依赖**:
-   - 形状: 云朵形或特殊图标
-   - 文字: [外部服务、第三方 API 等]
-   - 颜色: 粉色系或特殊颜色
-   - 位置: 图表边缘
-
-### 风格与配色方案
-- 扁平化矢量风格
-- 不同层级使用不同色系区分
-- 字体使用无衬线黑体
-- 线条简洁清晰，避免过度装饰
-
-### 技术参数建议
-文字必须清晰可辨。保持文字与背景的高对比度。建议 16:9 比例。2K 分辨率。使用标准流程图符号。矢量图风格，扁平化设计，专业学术论文图表风格。
+{arch_content}
 
 ---
 
