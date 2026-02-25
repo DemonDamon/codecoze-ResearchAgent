@@ -124,11 +124,28 @@ uvicorn src.main:app --host 0.0.0.0 --port 8000
 
 | 服务商 | Base URL | 推荐模型 | 获取 Key |
 |--------|----------|----------|----------|
+| **火山引擎（豆包）** | https://ark.cn-beijing.volces.com/api/v3 | ep-xxxx（endpoint_id） | [获取](https://console.volcengine.com/ark) |
 | **OpenAI** | https://api.openai.com/v1 | gpt-4o | [获取](https://platform.openai.com) |
 | **DeepSeek** | https://api.deepseek.com/v1 | deepseek-chat | [获取](https://platform.deepseek.com) |
 | **Kimi** | https://api.moonshot.cn/v1 | moonshot-v1-8k | [获取](https://platform.moonshot.cn) |
-| **豆包** | https://ark.cn-beijing.volces.com/api/v3 | doubao-pro | [获取](https://console.volcengine.com/ark) |
 | **智谱** | https://open.bigmodel.cn/api/paas/v4 | glm-4 | [获取](https://open.bigmodel.cn) |
+
+### 火山引擎（豆包）配置说明
+
+火山引擎需要先创建**推理接入点**：
+
+1. 访问 [火山引擎方舟控制台](https://console.volcengine.com/ark)
+2. 创建推理接入点，选择模型（如 Doubao-Pro-32K）
+3. 复制接入点 ID（格式：`ep-xxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`）
+4. 获取 API Key
+
+配置 `.env`：
+
+```bash
+OPENAI_API_KEY=你的API-Key
+OPENAI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+OPENAI_MODEL=ep-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
 
 ---
 
