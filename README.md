@@ -313,21 +313,72 @@ Settings → Models → OpenAI：
 - Base URL: `http://localhost:8000/v1`
 - API Key: `local`
 
-### 方式二：MCP 协议
+### 方式二：MCP 协议（推荐）
+
+MCP (Model Context Protocol) 允许你直接在 Cursor、Claude Code 等 AI 编辑器中使用本工具。
+
+#### Cursor 配置
+
+1. 创建或编辑 `.cursor/mcp.json`（项目级）或 `~/.cursor/mcp.json`（全局）：
+
+```json
+{
+    "mcpServers": {
+        "research-agent": {
+            "command": "python",
+            "args": ["-m", "src.mcp_server"],
+            "cwd": "/path/to/codecoze-ResearchAgent",
+            "env": {
+                "OPENAI_API_KEY": "your-api-key",
+                "OPENAI_BASE_URL": "https://ark.cn-beijing.volces.com/api/v3",
+                "OPENAI_MODEL": "doubao-seed-2-0-lite-260215",
+                "BOCHA_API_KEY": "sk-xxxx"
+            }
+        }
+    }
+}
+```
+
+2. 重启 Cursor，在 Chat 模式下选择 MCP 工具
+
+#### Claude Code 配置
 
 创建 `~/.claude/claude_desktop_config.json`：
 
 ```json
 {
-  "mcpServers": {
-    "codecoze-research": {
-      "command": "python",
-      "args": ["-m", "src.mcp_server"],
-      "cwd": "/path/to/codecoze-ResearchAgent"
+    "mcpServers": {
+        "research-agent": {
+            "command": "python",
+            "args": ["-m", "src.mcp_server"],
+            "cwd": "/path/to/codecoze-ResearchAgent"
+        }
     }
-  }
 }
 ```
+
+#### MCP 工具列表
+
+| 工具 | 说明 |
+|------|------|
+| `deep_research` | 深度技术调研，生成博客 |
+| `web_search` | 网络搜索 |
+| `crawl_webpage` | 爬取网页内容 |
+| `crawl_github` | 爬取 GitHub 仓库 |
+
+#### 使用示例
+
+在 Cursor 中：
+
+```
+帮我搜索 TuriX-CUA 相关信息，保存在 turix_analysis 下面
+```
+
+工具会自动：
+1. 创建 `/tmp/turix_analysis/` 目录
+2. 搜索相关信息
+3. 爬取相关网页
+4. 生成博客并保存
 
 详见 [API_INTEGRATION.md](docs/API_INTEGRATION.md)
 

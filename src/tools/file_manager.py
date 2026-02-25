@@ -5,6 +5,7 @@ Manages the creation, saving, reading, and listing of files in the working direc
 
 import os
 import json
+from datetime import datetime
 from typing import Optional
 from pathlib import Path
 from langchain.tools import tool
@@ -12,21 +13,47 @@ from langchain.tools import ToolRuntime
 from coze_coding_utils.runtime_ctx.context import new_context
 
 
+def get_default_workspace_dir(name: Optional[str] = None) -> str:
+    """Get the default workspace directory with timestamp.
+    
+    Args:
+        name: Optional custom name for the workspace. If provided, 
+              the directory will be /tmp/{name} (without timestamp).
+              If not provided, will use timestamp: /tmp/research_{timestamp}
+    
+    Returns:
+        The workspace directory path.
+    """
+    if name:
+        # 用户指定了目录名，直接使用
+        return os.path.join("/tmp", name)
+    else:
+        # 未指定，使用时间戳
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"/tmp/research_{timestamp}"
+
+
 @tool
-def create_workspace(output_dir: str, runtime: ToolRuntime = None) -> str:
+def create_workspace(output_dir: str = "", runtime: ToolRuntime = None) -> str:
     """Create the workspace directory structure for research.
     
     Args:
-        output_dir: The root directory for the workspace. Can be absolute or relative path.
-                   If relative, it will be relative to /tmp/ directory.
+        output_dir: The root directory name for the workspace.
+                   - If empty: automatically generates name with timestamp (e.g., /tmp/research_20260225_120000)
+                   - If provided: creates /tmp/{output_dir}
+                   - Can also be absolute path (starts with /)
     
     Returns:
         Success message with the created directory paths.
     """
     ctx = runtime.context if runtime else new_context(method="create_workspace")
     
-    # If output_dir is relative, make it under /tmp/
-    if not os.path.isabs(output_dir):
+    # Determine output directory
+    if not output_dir or output_dir.strip() == "":
+        # 自动生成带时间戳的目录名
+        output_dir = get_default_workspace_dir()
+    elif not os.path.isabs(output_dir):
+        # 相对路径，放在 /tmp 下
         output_dir = os.path.join("/tmp", output_dir)
     
     # Create directory structure
@@ -44,7 +71,12 @@ def create_workspace(output_dir: str, runtime: ToolRuntime = None) -> str:
     for dir_path in dirs:
         os.makedirs(dir_path, exist_ok=True)
     
-    return f"Workspace created at: {output_dir}\nDirectory structure:\n" + "\n".join([f"  - {d}" for d in dirs])
+    return f"""Workspace created at: {output_dir}
+
+Directory structure:
+{chr(10).join([f"  - {d}" for d in dirs])}
+
+💡 All files will be saved to this directory."""
 
 
 @tool
