@@ -296,14 +296,13 @@ def extensive_search_and_crawl(
     if not os.path.isabs(workspace_dir):
         workspace_dir = os.path.join("/tmp", workspace_dir)
     
-    # 检查是否在 Coze 平台
+    # 检查搜索服务可用性
     is_coze_platform = bool(os.getenv("COZE_WORKLOAD_IDENTITY_API_KEY"))
+    has_bocha = bool(os.getenv("BOCHA_API_KEY"))
     
-    if not is_coze_platform:
-        # 本地模式降级：直接爬取 GitHub 和常见文档站点
+    # 本地模式且无 Bocha：降级为 GitHub/文档站点爬取
+    if not is_coze_platform and not has_bocha:
         return _local_extensive_crawl(topic, workspace_dir)
-    
-    from coze_coding_dev_sdk import SearchClient
     
     # Generate diverse search queries
     query_templates = [
@@ -337,24 +336,41 @@ def extensive_search_and_crawl(
         query = query_templates[i]
         
         try:
-            search_client = SearchClient(ctx=ctx)
-            response = search_client.web_search(
-                query=query,
-                count=results_per_query,
-                need_summary=True
-            )
-            
-            if response.web_items:
-                for item in response.web_items:
-                    if item.url and item.url not in all_urls:
-                        all_urls.append(item.url)
+            # 优先使用 Bocha 搜索
+            if has_bocha:
+                response = _bocha_search_request(query, results_per_query)
+                web_items = response.get("web_pages", [])
+                for item in web_items:
+                    url = item.get("url") or item.get("link")
+                    if url and url not in all_urls:
+                        all_urls.append(url)
                         search_results.append({
                             'query': query,
-                            'title': item.title,
-                            'url': item.url,
-                            'snippet': item.snippet,
-                            'site': item.site_name
+                            'title': item.get('title', ''),
+                            'url': url,
+                            'snippet': item.get('snippet', item.get('description', '')),
+                            'site': item.get('site_name', '')
                         })
+            elif is_coze_platform:
+                from coze_coding_dev_sdk import SearchClient
+                search_client = SearchClient(ctx=ctx)
+                response = search_client.web_search(
+                    query=query,
+                    count=results_per_query,
+                    need_summary=True
+                )
+                
+                if response.web_items:
+                    for item in response.web_items:
+                        if item.url and item.url not in all_urls:
+                            all_urls.append(item.url)
+                            search_results.append({
+                                'query': query,
+                                'title': item.title,
+                                'url': item.url,
+                                'snippet': item.snippet,
+                                'site': item.site_name
+                            })
         except Exception:
             pass
     
@@ -547,3 +563,44 @@ def _local_extensive_crawl(topic: str, workspace_dir: str) -> str:
         f.write(summary)
     
     return summary
+
+
+def _bocha_search_request(query: str, count: int = 10) -> Dict:
+    """使用 Bocha AI 执行搜索请求
+    
+    Args:
+        query: 搜索查询
+        count: 返回结果数量
+    
+    Returns:
+        搜索结果字典
+    """
+    import os
+    import requests
+    
+    api_key = os.getenv("BOCHA_API_KEY")
+    if not api_key:
+        return {"web_pages": [], "error": "BOCHA_API_KEY not configured"}
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "query": query,
+        "count": count,
+        "summary": False
+    }
+    
+    try:
+        response = requests.post(
+            "https://api.bocha.io/v1/search",
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        return {"web_pages": [], "error": str(e)}

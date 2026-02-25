@@ -1,19 +1,138 @@
 """Web research tool for research agent.
 
 Performs web searches and saves results to the workspace.
-Supports both Coze platform and local mode.
+Supports:
+- Coze platform (SearchClient)
+- Bocha AI search (local mode)
+- Fallback mode (no search)
 """
 
 import os
-from typing import List, Optional
+import json
+import requests
+from typing import List, Optional, Dict, Any
 from langchain.tools import tool
 from langchain.tools import ToolRuntime
 from coze_coding_utils.runtime_ctx.context import new_context
 
-# 检查是否在 Coze 平台运行
+
 def _is_coze_platform() -> bool:
     """检测是否运行在 Coze 平台"""
     return bool(os.getenv("COZE_WORKLOAD_IDENTITY_API_KEY"))
+
+
+def _has_bocha_api() -> bool:
+    """检测是否配置了 Bocha API"""
+    return bool(os.getenv("BOCHA_API_KEY"))
+
+
+class BochaSearchClient:
+    """Bocha AI 搜索客户端"""
+    
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base_url = "https://api.bocha.io/v1"
+    
+    def search(self, query: str, count: int = 10) -> Dict[str, Any]:
+        """执行搜索
+        
+        Args:
+            query: 搜索查询
+            count: 返回结果数量
+        
+        Returns:
+            搜索结果字典
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "query": query,
+            "count": count,
+            "summary": True  # 请求 AI 摘要
+        }
+        
+        try:
+            response = requests.post(
+                f"{self.base_url}/search",
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            return {"error": str(e), "web_pages": []}
+    
+    def web_search(self, query: str, count: int = 10) -> Dict[str, Any]:
+        """网页搜索（兼容接口）"""
+        return self.search(query, count)
+
+
+def _bocha_search(query: str, count: int = 10) -> str:
+    """使用 Bocha AI 执行搜索"""
+    api_key = os.getenv("BOCHA_API_KEY")
+    if not api_key:
+        return _local_search_fallback(query, count)
+    
+    client = BochaSearchClient(api_key)
+    result = client.search(query, count)
+    
+    if "error" in result:
+        return f"""# 搜索失败
+
+**查询**: {query}
+
+❌ 错误: {result['error']}
+
+请检查：
+1. BOCHA_API_KEY 是否正确
+2. API 配额是否充足
+3. 网络连接是否正常
+"""
+    
+    # 解析搜索结果
+    web_pages = result.get("web_pages", [])
+    summary = result.get("summary", "")
+    
+    markdown_content = f"""# 网络搜索结果
+
+## 搜索信息
+- 查询: {query}
+- 结果数量: {len(web_pages)}
+- 搜索服务: Bocha AI
+
+---
+
+## AI 摘要
+{summary if summary else "无摘要"}
+
+---
+
+## 搜索结果
+
+"""
+    
+    for i, page in enumerate(web_pages, 1):
+        title = page.get("title", "无标题")
+        url = page.get("url", page.get("link", ""))
+        snippet = page.get("snippet", page.get("description", ""))
+        site_name = page.get("site_name", "")
+        
+        markdown_content += f"### {i}. {title}\n\n"
+        markdown_content += f"- **URL**: {url}\n"
+        if site_name:
+            markdown_content += f"- **来源**: {site_name}\n"
+        if snippet:
+            markdown_content += f"- **摘要**: {snippet}\n"
+        markdown_content += "\n---\n\n"
+    
+    if not web_pages:
+        markdown_content += "未找到搜索结果。\n"
+    
+    return markdown_content
 
 
 def _local_search_fallback(query: str, count: int = 10) -> str:
@@ -26,9 +145,10 @@ def _local_search_fallback(query: str, count: int = 10) -> str:
 
 ## 替代方案
 
-1. **手动搜索**: 请手动在浏览器中搜索相关内容
-2. **使用爬虫工具**: 如果你已知相关网页 URL，可以使用 `crawl_webpage` 工具爬取内容
-3. **提供 URL 列表**: 提供已知的相关网页 URL，使用 `batch_crawl_webpages` 批量爬取
+1. **配置 Bocha AI 搜索**: 在 .env 文件中设置 `BOCHA_API_KEY=sk-xxxx`
+2. **手动搜索**: 请手动在浏览器中搜索相关内容
+3. **使用爬虫工具**: 如果你已知相关网页 URL，可以使用 `crawl_webpage` 工具爬取内容
+4. **提供 URL 列表**: 提供已知的相关网页 URL，使用 `batch_crawl_webpages` 批量爬取
 
 ## 示例用法
 
@@ -40,7 +160,11 @@ def _local_search_fallback(query: str, count: int = 10) -> str:
 
 ## 启用搜索功能
 
-如需使用搜索功能，请部署到 Coze 平台或配置第三方搜索 API。
+如需使用搜索功能，请：
+1. 获取 Bocha AI API Key: https://bocha.io
+2. 在 .env 文件中配置: `BOCHA_API_KEY=sk-xxxx`
+
+或部署到 Coze 平台使用内置搜索服务。
 """
 
 
@@ -61,27 +185,26 @@ def search_web(
     Returns:
         Search results in markdown format.
     """
-    # 本地模式降级
-    if not _is_coze_platform():
-        return _local_search_fallback(query, count)
-    
-    ctx = runtime.context if runtime else new_context(method="search_web")
-    
-    from coze_coding_dev_sdk import SearchClient
-    search_client = SearchClient(ctx=ctx)
-    
-    response = search_client.web_search_with_summary(
-        query=query,
-        count=count
-    )
-    
-    # Build markdown content
-    markdown_content = f"""# 网络搜索结果
+    # 优先使用 Bocha AI
+    if _has_bocha_api():
+        markdown_content = _bocha_search(query, count)
+    # Coze 平台搜索
+    elif _is_coze_platform():
+        ctx = runtime.context if runtime else new_context(method="search_web")
+        from coze_coding_dev_sdk import SearchClient
+        search_client = SearchClient(ctx=ctx)
+        
+        response = search_client.web_search_with_summary(
+            query=query,
+            count=count
+        )
+        
+        markdown_content = f"""# 网络搜索结果
 
 ## 搜索信息
 - 查询: {query}
 - 结果数量: {len(response.web_items) if response.web_items else 0}
-- 搜索时间: [自动记录]
+- 搜索服务: Coze
 
 ---
 
@@ -93,25 +216,24 @@ def search_web(
 ## 搜索结果
 
 """
-    
-    if response.web_items:
-        for i, item in enumerate(response.web_items, 1):
-            markdown_content += f"### {i}. {item.title}\n\n"
-            markdown_content += f"- **URL**: {item.url}\n"
-            markdown_content += f"- **来源**: {item.site_name}\n"
-            
-            if item.snippet:
-                markdown_content += f"- **摘要**: {item.snippet}\n"
-            
-            if item.auth_info_des:
-                markdown_content += f"- **权威性**: {item.auth_info_des}\n"
-            
-            if item.publish_time:
-                markdown_content += f"- **发布时间**: {item.publish_time}\n"
-            
-            markdown_content += "\n---\n\n"
+        
+        if response.web_items:
+            for i, item in enumerate(response.web_items, 1):
+                markdown_content += f"### {i}. {item.title}\n\n"
+                markdown_content += f"- **URL**: {item.url}\n"
+                markdown_content += f"- **来源**: {item.site_name}\n"
+                if item.snippet:
+                    markdown_content += f"- **摘要**: {item.snippet}\n"
+                if item.auth_info_des:
+                    markdown_content += f"- **权威性**: {item.auth_info_des}\n"
+                if item.publish_time:
+                    markdown_content += f"- **发布时间**: {item.publish_time}\n"
+                markdown_content += "\n---\n\n"
+        else:
+            markdown_content += "未找到搜索结果。\n"
     else:
-        markdown_content += "未找到搜索结果。\n"
+        # 降级模式
+        markdown_content = _local_search_fallback(query, count)
     
     # Save to file
     if not os.path.isabs(workspace_dir):
@@ -120,7 +242,6 @@ def search_web(
     web_dir = os.path.join(workspace_dir, "sources", "web")
     os.makedirs(web_dir, exist_ok=True)
     
-    # Generate filename from query
     safe_query = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in query[:50])
     filename = f"search_{safe_query}.md"
     full_path = os.path.join(web_dir, filename)
@@ -146,8 +267,8 @@ def search_multiple_queries(
     Returns:
         Aggregated search results.
     """
-    # 本地模式降级
-    if not _is_coze_platform():
+    # 检查搜索服务可用性
+    if not _has_bocha_api() and not _is_coze_platform():
         queries_str = "\n".join([f"- {q}" for q in queries])
         return f"""# 多查询搜索服务不可用
 
@@ -156,14 +277,15 @@ def search_multiple_queries(
 
 ⚠️ 本地运行模式下，网络搜索服务不可用。
 
-## 替代方案
+## 启用搜索功能
 
-如果你已知相关网页 URL，请使用 `crawl_webpage` 或 `batch_crawl_webpages` 工具爬取内容。
+在 .env 文件中配置 Bocha AI:
+```
+BOCHA_API_KEY=sk-xxxx
+```
+
+获取 API Key: https://bocha.io
 """
-    
-    ctx = runtime.context if runtime else new_context(method="search_multiple_queries")
-    
-    from coze_coding_dev_sdk import SearchClient
     
     results = []
     results.append(f"# 多查询搜索结果\n")
@@ -176,45 +298,61 @@ def search_multiple_queries(
     all_items = []
     
     for query in queries:
-        search_client = SearchClient(ctx=ctx)
-        response = search_client.web_search(query=query, count=10)
-        
-        if response.web_items:
-            for item in response.web_items:
-                all_items.append({
-                    'query': query,
-                    'item': item
-                })
+        if _has_bocha_api():
+            # 使用 Bocha AI
+            client = BochaSearchClient(os.getenv("BOCHA_API_KEY"))
+            response = client.search(query, count=10)
+            
+            if "web_pages" in response:
+                for item in response["web_pages"]:
+                    all_items.append({
+                        'query': query,
+                        'title': item.get('title', ''),
+                        'url': item.get('url', item.get('link', '')),
+                        'snippet': item.get('snippet', item.get('description', '')),
+                        'site_name': item.get('site_name', '')
+                    })
+        elif _is_coze_platform():
+            ctx = runtime.context if runtime else new_context(method="search_multiple_queries")
+            from coze_coding_dev_sdk import SearchClient
+            search_client = SearchClient(ctx=ctx)
+            response = search_client.web_search(query=query, count=10)
+            
+            if response.web_items:
+                for item in response.web_items:
+                    all_items.append({
+                        'query': query,
+                        'title': item.title,
+                        'url': item.url,
+                        'snippet': item.snippet,
+                        'site_name': item.site_name
+                    })
     
     # Deduplicate by URL
     seen_urls = set()
     unique_items = []
     for item_data in all_items:
-        url = item_data['item'].url
-        if url not in seen_urls:
+        url = item_data['url']
+        if url and url not in seen_urls:
             seen_urls.add(url)
             unique_items.append(item_data)
     
     results.append(f"去重后结果数量: {len(unique_items)}\n\n")
     
-    # Sort by relevance (using rank_score if available)
-    unique_items.sort(key=lambda x: x['item'].rank_score if hasattr(x['item'], 'rank_score') else 0, reverse=True)
-    
-    for i, item_data in enumerate(unique_items[:20], 1):  # Top 20
-        item = item_data['item']
+    for i, item_data in enumerate(unique_items[:20], 1):
+        title = item_data['title']
+        url = item_data['url']
         query = item_data['query']
+        snippet = item_data['snippet']
+        site_name = item_data['site_name']
         
-        results.append(f"### {i}. {item.title}\n\n")
-        results.append(f"- **URL**: {item.url}\n")
-        results.append(f"- **来源**: {item.site_name}\n")
+        results.append(f"### {i}. {title}\n\n")
+        results.append(f"- **URL**: {url}\n")
+        if site_name:
+            results.append(f"- **来源**: {site_name}\n")
         results.append(f"- **查询来源**: {query}\n")
-        
-        if item.snippet:
-            results.append(f"- **摘要**: {item.snippet}\n")
-        
-        if item.auth_info_des:
-            results.append(f"- **权威性**: {item.auth_info_des}\n")
-        
+        if snippet:
+            results.append(f"- **摘要**: {snippet}\n")
         results.append("\n---\n\n")
     
     # Save to file
@@ -248,21 +386,18 @@ def search_best_practices(
     Returns:
         Best practices search results.
     """
-    # 本地模式降级
-    if not _is_coze_platform():
-        return _local_search_fallback(f"{technology} 最佳实践", 10)
-    
-    ctx = runtime.context if runtime else new_context(method="search_best_practices")
-    
-    from coze_coding_dev_sdk import SearchClient
-    
     query = f"{technology} best practices 最佳实践"
+    markdown_content = ""
     
-    search_client = SearchClient(ctx=ctx)
-    response = search_client.web_search(query=query, count=10)
-    
-    # Build markdown content
-    markdown_content = f"""# {technology} 最佳实践搜索结果
+    if _has_bocha_api():
+        markdown_content = _bocha_search(query, 10)
+    elif _is_coze_platform():
+        ctx = runtime.context if runtime else new_context(method="search_best_practices")
+        from coze_coding_dev_sdk import SearchClient
+        search_client = SearchClient(ctx=ctx)
+        response = search_client.web_search(query=query, count=10)
+        
+        markdown_content = f"""# {technology} 最佳实践搜索结果
 
 ## 搜索查询
 {query}
@@ -272,19 +407,19 @@ def search_best_practices(
 ## 搜索结果
 
 """
-    
-    if response.web_items:
-        for i, item in enumerate(response.web_items, 1):
-            markdown_content += f"### {i}. {item.title}\n\n"
-            markdown_content += f"- **URL**: {item.url}\n"
-            markdown_content += f"- **来源**: {item.site_name}\n"
-            
-            if item.snippet:
-                markdown_content += f"- **摘要**: {item.snippet}\n"
-            
-            markdown_content += "\n---\n\n"
+        
+        if response.web_items:
+            for i, item in enumerate(response.web_items, 1):
+                markdown_content += f"### {i}. {item.title}\n\n"
+                markdown_content += f"- **URL**: {item.url}\n"
+                markdown_content += f"- **来源**: {item.site_name}\n"
+                if item.snippet:
+                    markdown_content += f"- **摘要**: {item.snippet}\n"
+                markdown_content += "\n---\n\n"
+        else:
+            markdown_content += "未找到搜索结果。\n"
     else:
-        markdown_content += "未找到搜索结果。\n"
+        markdown_content = _local_search_fallback(query, 10)
     
     # Save to file
     if not os.path.isabs(workspace_dir):
@@ -317,14 +452,6 @@ def search_architecture_info(
     Returns:
         Architecture information search results.
     """
-    # 本地模式降级
-    if not _is_coze_platform():
-        return _local_search_fallback(f"{system_name} 架构设计", 10)
-    
-    ctx = runtime.context if runtime else new_context(method="search_architecture_info")
-    
-    from coze_coding_dev_sdk import SearchClient
-    
     queries = [
         f"{system_name} architecture",
         f"{system_name} 架构设计",
@@ -335,22 +462,44 @@ def search_architecture_info(
     all_items = []
     
     for query in queries:
-        search_client = SearchClient(ctx=ctx)
-        response = search_client.web_search(query=query, count=5)
-        
-        if response.web_items:
-            for item in response.web_items:
-                all_items.append({
-                    'query': query,
-                    'item': item
-                })
+        if _has_bocha_api():
+            client = BochaSearchClient(os.getenv("BOCHA_API_KEY"))
+            response = client.search(query, count=5)
+            
+            if "web_pages" in response:
+                for item in response["web_pages"]:
+                    all_items.append({
+                        'query': query,
+                        'title': item.get('title', ''),
+                        'url': item.get('url', item.get('link', '')),
+                        'snippet': item.get('snippet', item.get('description', '')),
+                        'site_name': item.get('site_name', '')
+                    })
+        elif _is_coze_platform():
+            ctx = runtime.context if runtime else new_context(method="search_architecture_info")
+            from coze_coding_dev_sdk import SearchClient
+            search_client = SearchClient(ctx=ctx)
+            response = search_client.web_search(query=query, count=5)
+            
+            if response.web_items:
+                for item in response.web_items:
+                    all_items.append({
+                        'query': query,
+                        'title': item.title,
+                        'url': item.url,
+                        'snippet': item.snippet,
+                        'site_name': item.site_name
+                    })
+    
+    if not all_items and not _has_bocha_api() and not _is_coze_platform():
+        return _local_search_fallback(f"{system_name} 架构设计", 10)
     
     # Deduplicate by URL
     seen_urls = set()
     unique_items = []
     for item_data in all_items:
-        url = item_data['item'].url
-        if url not in seen_urls:
+        url = item_data['url']
+        if url and url not in seen_urls:
             seen_urls.add(url)
             unique_items.append(item_data)
     
@@ -365,17 +514,19 @@ def search_architecture_info(
     markdown_content += f"\n**结果数量**: {len(unique_items)}\n\n---\n\n## 搜索结果\n\n"
     
     for i, item_data in enumerate(unique_items[:15], 1):
-        item = item_data['item']
+        title = item_data['title']
+        url = item_data['url']
         query = item_data['query']
+        snippet = item_data['snippet']
+        site_name = item_data['site_name']
         
-        markdown_content += f"### {i}. {item.title}\n\n"
-        markdown_content += f"- **URL**: {item.url}\n"
-        markdown_content += f"- **来源**: {item.site_name}\n"
+        markdown_content += f"### {i}. {title}\n\n"
+        markdown_content += f"- **URL**: {url}\n"
+        if site_name:
+            markdown_content += f"- **来源**: {site_name}\n"
         markdown_content += f"- **查询来源**: {query}\n"
-        
-        if item.snippet:
-            markdown_content += f"- **摘要**: {item.snippet}\n"
-        
+        if snippet:
+            markdown_content += f"- **摘要**: {snippet}\n"
         markdown_content += "\n---\n\n"
     
     # Save to file

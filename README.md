@@ -147,6 +147,19 @@ OPENAI_MODEL=doubao-seed-1-8-251228
 - `doubao-seed-2-0-lite-260215` - 轻量版
 - `doubao-seed-2-0-pro-260215` - 专业版
 
+### Bocha AI 搜索配置（推荐）
+
+本地运行时，可配置 **Bocha AI** 搜索服务：
+
+```bash
+# .env 配置
+BOCHA_API_KEY=sk-xxxx
+```
+
+获取 API Key：https://bocha.io
+
+配置后，本地模式也能使用完整的搜索功能！
+
 ---
 
 ## 📚 API 文档
