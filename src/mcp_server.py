@@ -37,8 +37,8 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent, ImageContent, Resource
 
-# Setup path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Setup path for imports (add src/ so that agents, tools, etc. are found)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from agents.agent import build_agent
 from coze_coding_utils.runtime_ctx.context import new_context
@@ -227,9 +227,10 @@ async def _handle_deep_research(arguments: Dict[str, Any]) -> List[TextContent]:
     ctx = new_context(method="mcp_deep_research")
     agent = get_agent()
     
-    # Prepare input
+    # Prepare input（recursion_limit 需足够大，deep_research 会多次搜索/爬取/分析）
     config = {
-        "configurable": {"thread_id": ctx.run_id}
+        "configurable": {"thread_id": ctx.run_id},
+        "recursion_limit": 100,
     }
     
     # Run agent
@@ -263,7 +264,7 @@ async def _handle_web_search(arguments: Dict[str, Any]) -> List[TextContent]:
         import requests
         try:
             response = requests.post(
-                "https://api.bocha.io/v1/search",
+                "https://api.bochaai.com/v1/web-search",
                 headers={
                     "Authorization": f"Bearer {bocha_api_key}",
                     "Content-Type": "application/json"
@@ -273,9 +274,17 @@ async def _handle_web_search(arguments: Dict[str, Any]) -> List[TextContent]:
             )
             response.raise_for_status()
             data = response.json()
-            
-            web_pages = data.get("web_pages", [])
-            summary = data.get("summary", "")
+            # 兼容 api.bochaai.com 返回格式 data.webPages.value
+            if "data" in data and "webPages" in data["data"]:
+                raw_pages = data["data"]["webPages"].get("value", [])
+                web_pages = [
+                    {"title": p.get("name", "无标题"), "url": p.get("url", ""), "snippet": p.get("summary", ""), "description": p.get("summary", "")}
+                    for p in raw_pages
+                ]
+                summary = data.get("data", {}).get("summary", "")
+            else:
+                web_pages = data.get("web_pages", [])
+                summary = data.get("summary", "")
             
             results = [f"# 搜索结果: {query}\n"]
             if summary:

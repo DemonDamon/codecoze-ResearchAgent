@@ -27,11 +27,11 @@ def _has_bocha_api() -> bool:
 
 
 class BochaSearchClient:
-    """Bocha AI 搜索客户端"""
+    """Bocha AI 搜索客户端（官方域名 api.bochaai.com）"""
     
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.base_url = "https://api.bocha.io/v1"
+        self.base_url = "https://api.bochaai.com/v1"
     
     def search(self, query: str, count: int = 10) -> Dict[str, Any]:
         """执行搜索
@@ -60,7 +60,7 @@ class BochaSearchClient:
         try:
             logger.info(f"Bocha API 请求: query={query}, count={count}")
             response = requests.post(
-                f"{self.base_url}/search",
+                f"{self.base_url}/web-search",
                 headers=headers,
                 json=payload,
                 timeout=30
@@ -68,6 +68,19 @@ class BochaSearchClient:
             logger.info(f"Bocha API 响应状态: {response.status_code}")
             response.raise_for_status()
             result = response.json()
+            # 兼容新旧 API 格式：api.bochaai.com 返回 data.webPages.value
+            if "data" in result and "webPages" in result["data"]:
+                raw_pages = result["data"]["webPages"].get("value", [])
+                web_pages = [
+                    {
+                        "title": p.get("name", "无标题"),
+                        "url": p.get("url", ""),
+                        "snippet": p.get("summary", ""),
+                        "description": p.get("summary", ""),
+                    }
+                    for p in raw_pages
+                ]
+                result = {"web_pages": web_pages, "summary": result.get("data", {}).get("summary", "")}
             web_pages = result.get("web_pages", [])
             logger.info(f"Bocha API 返回结果数: {len(web_pages)}")
             return result

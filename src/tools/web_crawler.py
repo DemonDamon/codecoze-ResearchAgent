@@ -729,14 +729,23 @@ def _bocha_search_request(query: str, count: int = 10) -> Dict:
     try:
         logger.debug(f"Bocha 搜索请求: {query}")
         response = requests.post(
-            "https://api.bocha.io/v1/search",
+            "https://api.bochaai.com/v1/web-search",
             headers=headers,
             json=payload,
             timeout=30
         )
         response.raise_for_status()
         result = response.json()
-        web_pages = result.get("web_pages", [])
+        # 兼容 api.bochaai.com 返回格式 data.webPages.value
+        if "data" in result and "webPages" in result["data"]:
+            raw_pages = result["data"]["webPages"].get("value", [])
+            web_pages = [
+                {"title": p.get("name", "无标题"), "url": p.get("url", ""), "snippet": p.get("summary", ""), "link": p.get("url", "")}
+                for p in raw_pages
+            ]
+            result = {"web_pages": web_pages}
+        else:
+            web_pages = result.get("web_pages", [])
         logger.debug(f"Bocha 搜索结果: {len(web_pages)} 条")
         return result
     except requests.exceptions.HTTPError as e:
