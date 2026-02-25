@@ -300,6 +300,12 @@ def extensive_search_and_crawl(
     is_coze_platform = bool(os.getenv("COZE_WORKLOAD_IDENTITY_API_KEY"))
     has_bocha = bool(os.getenv("BOCHA_API_KEY"))
     
+    # Ensure workspace directory exists at the start
+    web_dir = os.path.join(workspace_dir, "sources", "web")
+    images_dir = os.path.join(workspace_dir, "sources", "manual_images")
+    os.makedirs(web_dir, exist_ok=True)
+    os.makedirs(images_dir, exist_ok=True)
+    
     # 本地模式且无 Bocha：降级为 GitHub/文档站点爬取
     if not is_coze_platform and not has_bocha:
         return _local_extensive_crawl(topic, workspace_dir)
@@ -433,13 +439,17 @@ def extensive_search_and_crawl(
 3. 手动提供更多URL进行爬取
 """
     
+    # Ensure directory exists before saving
+    web_dir = os.path.join(workspace_dir, "sources", "web")
+    os.makedirs(web_dir, exist_ok=True)
+    
     # Save search results as JSON
-    results_path = os.path.join(workspace_dir, "sources", "web", "search_results.json")
+    results_path = os.path.join(web_dir, "search_results.json")
     with open(results_path, 'w', encoding='utf-8') as f:
         json.dump(search_results, f, ensure_ascii=False, indent=2)
     
     # Save crawl summary
-    summary_path = os.path.join(workspace_dir, "sources", "web", "crawl_summary.md")
+    summary_path = os.path.join(web_dir, "crawl_summary.md")
     with open(summary_path, 'w', encoding='utf-8') as f:
         f.write(crawl_summary)
     
@@ -457,6 +467,12 @@ def _local_extensive_crawl(topic: str, workspace_dir: str) -> str:
         爬取结果摘要
     """
     import re
+    
+    # Ensure workspace directory exists at the start
+    web_dir = os.path.join(workspace_dir, "sources", "web")
+    images_dir = os.path.join(workspace_dir, "sources", "manual_images")
+    os.makedirs(web_dir, exist_ok=True)
+    os.makedirs(images_dir, exist_ok=True)
     
     # 解析主题，判断是否是 GitHub URL
     github_pattern = r'https?://github\.com/([^/]+)/([^/]+)'
@@ -552,13 +568,22 @@ def _local_extensive_crawl(topic: str, workspace_dir: str) -> str:
 请帮我调研：https://github.com/owner/repo
 ```
 
-### 方式三：部署到 Coze 平台
-如需完整的搜索功能，可以将项目部署到 Coze 平台。
+### 方式三：配置 Bocha AI 搜索
+在 .env 文件中配置 Bocha API Key：
+```
+BOCHA_API_KEY=sk-xxxx
+```
+
+或部署到 Coze 平台使用内置搜索服务。
 
 """
     
+    # Ensure directory exists before saving
+    web_dir = os.path.join(workspace_dir, "sources", "web")
+    os.makedirs(web_dir, exist_ok=True)
+    
     # Save summary
-    summary_path = os.path.join(workspace_dir, "sources", "web", "crawl_summary.md")
+    summary_path = os.path.join(web_dir, "crawl_summary.md")
     with open(summary_path, 'w', encoding='utf-8') as f:
         f.write(summary)
     
