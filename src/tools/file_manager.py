@@ -13,24 +13,34 @@ from langchain.tools import ToolRuntime
 from coze_coding_utils.runtime_ctx.context import new_context
 
 
+def get_output_base() -> str:
+    """获取调研输出根目录，支持通过环境变量 RESEARCH_OUTPUT_BASE 自定义。
+    
+    在 MCP 的 mcp.json 中配置 env.RESEARCH_OUTPUT_BASE 即可指定落盘地址。
+    例如: "/Users/damon/myWork/myBlog/research-outputs"
+    """
+    return os.getenv("RESEARCH_OUTPUT_BASE", "/tmp").rstrip("/")
+
+
 def get_default_workspace_dir(name: Optional[str] = None) -> str:
     """Get the default workspace directory with timestamp.
     
     Args:
         name: Optional custom name for the workspace. If provided, 
-              the directory will be /tmp/{name} (without timestamp).
-              If not provided, will use timestamp: /tmp/research_{timestamp}
+              the directory will be {output_base}/{name} (without timestamp).
+              If not provided, will use timestamp: {output_base}/research_{timestamp}
     
     Returns:
         The workspace directory path.
     """
+    base = get_output_base()
     if name:
         # 用户指定了目录名，直接使用
-        return os.path.join("/tmp", name)
+        return os.path.join(base, name)
     else:
         # 未指定，使用时间戳
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return f"/tmp/research_{timestamp}"
+        return f"{base}/research_{timestamp}"
 
 
 @tool
@@ -53,8 +63,8 @@ def create_workspace(output_dir: str = "", runtime: ToolRuntime = None) -> str:
         # 自动生成带时间戳的目录名
         output_dir = get_default_workspace_dir()
     elif not os.path.isabs(output_dir):
-        # 相对路径，放在 /tmp 下
-        output_dir = os.path.join("/tmp", output_dir)
+        # 相对路径，放在 output_base 下
+        output_dir = os.path.join(get_output_base(), output_dir)
     
     # Create directory structure
     dirs = [

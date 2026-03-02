@@ -28,6 +28,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -65,6 +66,20 @@ def get_agent():
     return _agent_instance
 
 
+def _derive_workspace_name_from_topic(topic: str) -> str:
+    """从 topic 自动推导工作目录名。如 GitHub URL → owner_repo，其他 → slugify。"""
+    topic = (topic or "").strip()
+    if not topic:
+        return f"research_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # GitHub: https://github.com/owner/repo → owner_repo
+    m = re.search(r"github\.com[/:]([^/]+)/([^/?#]+)", topic, re.I)
+    if m:
+        return f"{m.group(1)}_{m.group(2)}".lower().replace(".", "_")
+    # 通用：保留字母数字中文，其他替换为下划线，截断
+    slug = re.sub(r"[^\w\u4e00-\u9fff]+", "_", topic).strip("_")
+    return (slug[:50] or "research") + f"_{datetime.now().strftime('%H%M%S')}"
+
+
 @server.list_tools()
 async def list_tools() -> List[Tool]:
     """List available MCP tools."""
@@ -96,7 +111,11 @@ async def list_tools() -> List[Tool]:
                     },
                     "workspace_name": {
                         "type": "string",
-                        "description": "工作目录名称（可选）。如 'turix_analysis'，将保存到 /tmp/turix_analysis。不指定则自动生成时间戳目录。"
+                        "description": "工作目录名称（可选）。不填则从 topic 自动推导，如 GitHub URL → lobehub_lobehub。最终路径为 output_dir 或 {RESEARCH_OUTPUT_BASE}/{workspace_name}"
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "完整落盘路径（可选）。指定则忽略 workspace_name，直接使用此路径。如 /Users/xxx/myBlog/research-outputs/lobehub_research。不填则用 env.RESEARCH_OUTPUT_BASE + workspace_name"
                     },
                     "depth": {
                         "type": "string",
@@ -145,7 +164,11 @@ async def list_tools() -> List[Tool]:
                     },
                     "workspace_name": {
                         "type": "string",
-                        "description": "工作目录名称（可选），保存到 /tmp/{workspace_name}/sources/web/"
+                        "description": "工作目录名称（可选）。不填则从 URL 推导。最终路径为 output_dir 或 {RESEARCH_OUTPUT_BASE}/{workspace_name}"
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "完整落盘路径（可选）。指定则直接使用，如 /Users/xxx/research-outputs/xxx"
                     },
                     "download_images": {
                         "type": "boolean",
@@ -168,7 +191,11 @@ async def list_tools() -> List[Tool]:
                     },
                     "workspace_name": {
                         "type": "string",
-                        "description": "工作目录名称（可选）"
+                        "description": "工作目录名称（可选）。不填则从 repo_url 推导，如 lobehub/lobehub → lobehub_lobehub"
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "完整落盘路径（可选）。指定则直接使用"
                     }
                 },
                 "required": ["repo_url"]
@@ -234,17 +261,25 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
 
 async def _handle_deep_research(arguments: Dict[str, Any]) -> List[TextContent]:
     """Handle deep research tool call."""
+    from tools.file_manager import get_output_base
+
     topic = arguments.get("topic")
-    workspace_name = arguments.get("workspace_name", "")
+    workspace_name = arguments.get("workspace_name", "").strip()
+    output_dir = arguments.get("output_dir", "").strip()
     depth = arguments.get("depth", "normal")
     focus_areas = arguments.get("focus_areas", [])
-    
-    # Build the prompt
+
+    # 确定最终落盘路径
+    if output_dir:
+        workspace_path = output_dir
+    else:
+        if not workspace_name:
+            workspace_name = _derive_workspace_name_from_topic(topic)
+        workspace_path = f"{get_output_base()}/{workspace_name}"
+
+    # Build the prompt（传完整路径给 agent，create_workspace 支持绝对路径）
     prompt_parts = [f"帮我深度调研：{topic}"]
-    
-    # Add workspace name if specified
-    if workspace_name:
-        prompt_parts.append(f"保存在 {workspace_name} 下面")
+    prompt_parts.append(f"保存在 {workspace_path} 下面")
     
     # Add depth instruction
     if depth == "quick":
@@ -257,7 +292,7 @@ async def _handle_deep_research(arguments: Dict[str, Any]) -> List[TextContent]:
     
     prompt = " ".join(prompt_parts)
     
-    logger.info(f"Starting deep research: {topic}, workspace: {workspace_name}, depth: {depth}")
+    logger.info(f"Starting deep research: {topic}, workspace: {workspace_path}, depth: {depth}")
     
     # Create context and invoke agent
     ctx = new_context(method="mcp_deep_research")
@@ -369,15 +404,21 @@ async def _handle_web_search(arguments: Dict[str, Any]) -> List[TextContent]:
 async def _handle_crawl_webpage(arguments: Dict[str, Any]) -> List[TextContent]:
     """Handle webpage crawling tool call."""
     from tools.web_crawler import _crawl_webpage_internal
-    
+    from tools.file_manager import get_output_base
+
     url = arguments.get("url")
-    workspace_name = arguments.get("workspace_name", f"crawl_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    output_dir = arguments.get("output_dir", "").strip()
+    workspace_name = arguments.get("workspace_name", "").strip()
     download_images = arguments.get("download_images", True)
-    
+
+    if output_dir:
+        workspace_dir = output_dir
+    else:
+        if not workspace_name:
+            workspace_name = _derive_workspace_name_from_topic(url)
+        workspace_dir = f"{get_output_base()}/{workspace_name}"
+
     logger.info(f"Crawling webpage: {url}")
-    
-    # Use /tmp for crawled content
-    workspace_dir = f"/tmp/{workspace_name}"
     result = _crawl_webpage_internal(url, workspace_dir)
     
     if result["success"]:
@@ -401,18 +442,25 @@ async def _handle_crawl_webpage(arguments: Dict[str, Any]) -> List[TextContent]:
 async def _handle_crawl_github(arguments: Dict[str, Any]) -> List[TextContent]:
     """Handle GitHub repository crawling tool call."""
     from tools.web_crawler import extensive_search_and_crawl
-    
+    from tools.file_manager import get_output_base
+
     repo_url = arguments.get("repo_url")
-    workspace_name = arguments.get("workspace_name", f"github_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-    
+    output_dir = arguments.get("output_dir", "").strip()
+    workspace_name = arguments.get("workspace_name", "").strip()
+
+    if output_dir:
+        workspace_dir = output_dir
+    else:
+        if not workspace_name:
+            workspace_name = _derive_workspace_name_from_topic(repo_url)
+        workspace_dir = f"{get_output_base()}/{workspace_name}"
+
     logger.info(f"Crawling GitHub: {repo_url}")
-    
-    # Call the extensive_search_and_crawl with the GitHub URL
     result = extensive_search_and_crawl.func(
         topic=repo_url,
         num_queries=5,
         results_per_query=5,
-        workspace_dir=f"/tmp/{workspace_name}"
+        workspace_dir=workspace_dir
     )
     
     return [TextContent(type="text", text=result)]
@@ -433,7 +481,8 @@ async def _handle_regenerate_visual_prompt(arguments: Dict[str, Any]) -> List[Te
     if not content_description:
         return [TextContent(type="text", text="错误：content_description 为必填参数")]
 
-    workspace_dir = f"/tmp/{workspace_name}"
+    from tools.file_manager import get_output_base
+    workspace_dir = f"{get_output_base()}/{workspace_name}"
     logger.info(f"Regenerating visual prompt: type={prompt_type}, workspace={workspace_name}")
 
     # Run in thread pool to avoid blocking (LLM call can be slow)
